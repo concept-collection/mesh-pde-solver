@@ -1,9 +1,11 @@
-// Headless validation of the solver engine — runs the same MATLAB project the
-// browser worker runs, in Node, against the installed numbl. Bootstraps mip
-// exactly like the worker does and lets `mip load --install surfacefun` in
-// main.m fetch surfacefun/chebfun itself. Node has no synchronous
-// XMLHttpRequest, so websave/webread are shimmed with curl (responses cached
-// in .cache/ keyed by URL, so repeat runs are offline).
+// Headless validation of the solver — runs the same MATLAB project the
+// browser worker runs, in Node, against the installed numbl. Each solve
+// stages params.json, runs matlab/main.m standalone (as the browser does in
+// a fresh session), and reads result.json back from the VFS. The VFS is
+// shared across solves, standing in for numbl/browser's IndexedDB-persisted
+// /system, so `mip load --install surfacefun` only downloads once. Node has
+// no synchronous XMLHttpRequest, so websave/webread are shimmed with curl
+// (responses cached in .cache/ keyed by URL, so repeat runs are offline).
 //
 //   npm run engine-test
 
@@ -75,11 +77,9 @@ async function main() {
 
   const projectFiles = [
     'main.m',
-    'solver_session.m',
     'solve_pde.m',
     'surfacemesh_from_quads.m',
     'load_gmsh_quads.m',
-    'placeholder.html',
   ]
   for (const name of projectFiles) {
     vfs.writeFile(`/project/${name}`, enc.encode(readProjectFile(name)))
@@ -88,57 +88,37 @@ async function main() {
     '/project/mesh.msh',
     fs.readFileSync(path.join(root, 'public', 'samples', 'sphere.msh'))
   )
-  vfs.clearChangeTracking()
   vfs.setCwd('/project')
 
-  const events = []
-  let compId = null
-
-  console.log('running main.m (mip load --install surfacefun) ...')
-  const t0 = Date.now()
-  const result = executeCode(
-    readProjectFile('main.m'),
-    {
-      onOutput: text => process.stdout.write(`[numbl] ${text}`),
-      onDrawnow: () => {},
-      displayResults: false,
-      maxIterations: 1e9,
-      optimization: '1',
-      fileIO: new NodeFileIOAdapter(vfs),
-      system: new BrowserSystemAdapter(vfs),
-      onHtmlSourceEvent: (id, name, dataJson) =>
-        events.push({name, data: JSON.parse(dataJson)}),
-    },
-    projectFiles
-      .filter(n => n.endsWith('.m'))
-      .map(n => ({name: n, source: readProjectFile(n)})),
-    vfs.normalizePath('/project/main.m'),
-    [MIP_SEARCH_PATH]
-  )
-  for (const pi of result.plotInstructions) {
-    if (pi.type === 'uihtml') compId = pi.id
-  }
-  console.log(`boot: ${(Date.now() - t0) / 1000}s, uihtml comp = ${compId}`)
-  const session = result.uihtmlSession
-  if (!session || !compId) throw new Error('no live uihtml session after run')
+  const workspaceFiles = projectFiles.map(n => ({name: n, source: readProjectFile(n)}))
+  const decoder = new TextDecoder()
 
   const solve = params => {
-    events.length = 0
+    vfs.writeFile('/project/params.json', enc.encode(JSON.stringify(params)))
+    vfs.writeFile('/project/result.json', enc.encode('')) // no stale reads
     const t = Date.now()
-    session.dispatchEvent(compId, 'HTMLEventReceived', {
-      name: 'solve',
-      data: params,
-    })
-    const ev = events[events.length - 1]
-    if (!ev) throw new Error('no event came back from solve')
-    console.log(`solve [${params.pde}] -> '${ev.name}' in ${(Date.now() - t) / 1000}s`)
-    return ev
+    executeCode(
+      readProjectFile('main.m'),
+      {
+        onOutput: text => process.stdout.write(`[numbl] ${text}`),
+        onDrawnow: () => {},
+        displayResults: false,
+        maxIterations: 1e9,
+        optimization: '1',
+        fileIO: new NodeFileIOAdapter(vfs),
+        system: new BrowserSystemAdapter(vfs),
+      },
+      workspaceFiles,
+      vfs.normalizePath('/project/main.m'),
+      [MIP_SEARCH_PATH]
+    )
+    const result = JSON.parse(decoder.decode(vfs.readFile('/project/result.json')))
+    console.log(`solve [${params.pde}] in ${(Date.now() - t) / 1000}s`)
+    return result
   }
 
   // 1. Poisson on the closed sphere
-  let ev = solve({pde: 'poisson', f: 'x.*y.*z', c: '', p: 6, closed: true})
-  if (ev.name !== 'solution') throw new Error(`poisson failed: ${JSON.stringify(ev.data)}`)
-  let d = ev.data
+  let d = solve({pde: 'poisson', f: 'x.*y.*z', c: '', p: 6, closed: true})
   console.log(`  npatches=${d.npatches} n=${d.n} u in [${d.umin.toFixed(6)}, ${d.umax.toFixed(6)}]`)
   if (d.npatches !== 216 || d.n !== 7) throw new Error('unexpected solution shape')
   if (!isFinite(d.umin) || !isFinite(d.umax) || d.umin === d.umax)
@@ -147,25 +127,28 @@ async function main() {
   // Eigenfunction check: x*y*z is a degree-3 solid harmonic, so on the unit
   // sphere lap_S (x*y*z) = -12 * (x*y*z). Solving with f = -12*x*y*z must
   // reproduce u = x*y*z, whose max on the sphere is 1/(3*sqrt(3)).
-  ev = solve({pde: 'poisson', f: '-12*(x.*y.*z)', c: '', p: 8, closed: true})
-  d = ev.data
+  d = solve({pde: 'poisson', f: '-12*(x.*y.*z)', c: '', p: 8, closed: true})
   const expected = 1 / (3 * Math.sqrt(3))
   console.log(`  eigencheck: umax=${d.umax.toFixed(6)} expected~${expected.toFixed(6)}`)
   if (Math.abs(d.umax - expected) > 0.01) throw new Error('eigenfunction check failed')
 
   // 2. Helmholtz with a variable coefficient
-  ev = solve({pde: 'helmholtz', f: '1 + 0*x', c: '100*(1 - z)', p: 6, closed: true})
-  if (ev.name !== 'solution') throw new Error(`helmholtz failed: ${JSON.stringify(ev.data)}`)
-  console.log(`  u in [${ev.data.umin.toFixed(6)}, ${ev.data.umax.toFixed(6)}]`)
+  d = solve({pde: 'helmholtz', f: '1 + 0*x', c: '100*(1 - z)', p: 6, closed: true})
+  console.log(`  u in [${d.umin.toFixed(6)}, ${d.umax.toFixed(6)}]`)
 
-  // 3. Bad expression surfaces as a solveError, session stays alive
-  ev = solve({pde: 'poisson', f: 'this is not matlab', c: '', p: 4, closed: true})
-  if (ev.name !== 'solveError') throw new Error('expected solveError for bad expression')
-  console.log(`  error path OK: ${JSON.stringify(ev.data).slice(0, 100)}`)
+  // 3. Bad expression errors out of the run (the host surfaces the message)
+  let err = null
+  try {
+    solve({pde: 'poisson', f: 'this is not matlab', c: '', p: 4, closed: true})
+  } catch (e) {
+    err = e
+  }
+  if (!err) throw new Error('expected an error for bad expression')
+  console.log(`  error path OK: ${String(err.message).slice(0, 100)}`)
 
-  // 4. Session still works after an error
-  ev = solve({pde: 'poisson', f: 'x', c: '', p: 4, closed: true})
-  if (ev.name !== 'solution') throw new Error('session did not survive the error')
+  // 4. A later solve is unaffected (fresh run per solve)
+  d = solve({pde: 'poisson', f: 'x', c: '', p: 4, closed: true})
+  if (d.type !== 'solution') throw new Error('solve after error failed')
 
   console.log('engine-test: all checks passed')
 }

@@ -32,14 +32,13 @@ Whether the surface is closed or open is detected from the edge connectivity.
 
 1. `src/mesh/` — meshio in Pyodide parses the upload, keeps the quad cells,
    and writes a canonical Gmsh MSH 2.2 ASCII file plus preview arrays.
-2. `src/engine/` — a managed numbl session (`createNumblSession` from
-   `numbl/browser`): numbl owns the worker and VFS, bootstraps the
-   [mip](https://github.com/mip-org) package manager, and runs
-   [`matlab/main.m`](matlab/main.m), which begins with
-   `mip load --install surfacefun`. The script opens a placeholder `uihtml`
-   figure that is never rendered — it is the event bridge: the host writes
-   `mesh.msh` into the VFS and dispatches `solve` events; the script solves
-   and sends per-patch data back.
+2. `src/engine/` — each solve boots a fresh managed numbl session
+   (`createNumblSession` from `numbl/browser`): numbl owns the worker and
+   VFS and bootstraps the [mip](https://github.com/mip-org) package manager.
+   The host stages `mesh.msh` and `params.json` and runs
+   [`matlab/main.m`](matlab/main.m) standalone — it begins with
+   `mip load --install surfacefun`, solves, and writes `result.json`, which
+   the host reads back before disposing the worker.
 3. `matlab/solve_pde.m` — parses the mesh (`load_gmsh_quads.m`), builds a
    `surfacemesh` from the quads, `resample`s it to the requested order, and
    solves with `surfaceop`.
@@ -66,4 +65,5 @@ numbl's synchronous-XHR `websave`/`webread` with curl (responses cached in
 `.cache/`), and checks a Poisson solve against an exact spherical-harmonic
 solution.
 
-Requires numbl >= 0.4.9 (the `numbl/browser` managed-session entry).
+Requires numbl >= 0.4.10 (the `numbl/browser` managed-session entry with
+`readFile`).

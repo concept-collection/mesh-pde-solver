@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { ACCEPT, formatForFilename } from './mesh/formats'
 import { initMeshio, parseMeshFile } from './mesh/meshio'
 import { edgeClassification, type QuadMeshData } from './mesh/quadmesh'
-import { SolverEngine } from './engine/engine'
-import type { SolutionData } from './engine/protocol'
+import { prewarm, solve, type SolutionData } from './engine/engine'
 import {
   PDES,
   MAX_QUADS,
@@ -15,18 +14,9 @@ import {
 } from './pde/presets'
 import { SurfaceView } from './render/SurfaceView'
 
-// Module-level singletons so React StrictMode double-mounting doesn't boot
-// two engines (each boot downloads the MATLAB packages).
-let engineSingleton: SolverEngine | null = null
-function getEngine(): SolverEngine {
-  if (!engineSingleton) {
-    engineSingleton = new SolverEngine()
-    engineSingleton.start().catch(() => {
-      /* surfaced through onProgress/status below */
-    })
-  }
-  return engineSingleton
-}
+// Module-level so React StrictMode double-mounting doesn't prewarm twice
+// (the prewarm downloads the MATLAB packages into numbl's IndexedDB cache).
+let prewarmPromise: Promise<void> | null = null
 
 interface LoadedMesh {
   name: string
@@ -44,13 +34,9 @@ const SAMPLES = [
 ]
 
 export default function App() {
-  const engineRef = useRef<SolverEngine>(null)
-  if (!engineRef.current) engineRef.current = getEngine()
-  const engine = engineRef.current
-
   const [meshioStatus, setMeshioStatus] = useState('Loading Python runtime…')
   const [meshioReady, setMeshioReady] = useState(false)
-  const [engineStatus, setEngineStatus] = useState('Starting MATLAB engine…')
+  const [engineStatus, setEngineStatus] = useState('Preparing MATLAB packages…')
   const [engineReady, setEngineReady] = useState(false)
   const [consoleLines, setConsoleLines] = useState<string[]>([])
 
@@ -64,9 +50,14 @@ export default function App() {
   const [order, setOrder] = useState(DEFAULT_ORDER)
 
   const [solving, setSolving] = useState(false)
+  const [solveStatus, setSolveStatus] = useState('')
   const [solveError, setSolveError] = useState<string | null>(null)
   const [solution, setSolution] = useState<SolutionData | null>(null)
   const [solveSeconds, setSolveSeconds] = useState<number | null>(null)
+
+  const appendConsole = useCallback((text: string) => {
+    setConsoleLines((lines) => [...lines.slice(-199), text.replace(/\n$/, '')])
+  }, [])
 
   useEffect(() => {
     initMeshio(setMeshioStatus)
@@ -76,20 +67,17 @@ export default function App() {
       })
       .catch((err) => setMeshioStatus(`Mesh reader failed: ${String(err.message ?? err)}`))
 
-    engine.onProgress = setEngineStatus
-    engine.onError = (message) => setEngineStatus(`Engine failed: ${message}`)
-    engine.onOutput = (text) =>
-      setConsoleLines((lines) => [...lines.slice(-199), text.replace(/\n$/, '')])
-    if (engine.lastError) setEngineStatus(`Engine failed: ${engine.lastError}`)
-    const poll = setInterval(() => {
-      if (engine.isReady) {
+    if (!prewarmPromise) {
+      prewarmPromise = prewarm({ onProgress: setEngineStatus, onOutput: appendConsole })
+    }
+    prewarmPromise
+      // A failed prewarm isn't fatal — the solve re-attempts the downloads.
+      .catch((err) => appendConsole(`package prewarm failed: ${String(err?.message ?? err)}`))
+      .finally(() => {
         setEngineReady(true)
         setEngineStatus('')
-        clearInterval(poll)
-      }
-    }, 250)
-    return () => clearInterval(poll)
-  }, [engine])
+      })
+  }, [appendConsole])
 
   const loadMesh = useCallback(
     async (name: string, bytes: Uint8Array) => {
@@ -117,7 +105,6 @@ export default function App() {
           nonManifold: cls.nonManifold,
           warnings: result.warnings,
         })
-        engine.setMesh(result.mesh.mshBytes)
       } catch (err) {
         setMesh(null)
         setMeshError(err instanceof Error ? err.message : String(err))
@@ -125,7 +112,7 @@ export default function App() {
         setParsing(false)
       }
     },
-    [engine],
+    [],
   )
 
   const onUpload = useCallback(
@@ -154,16 +141,21 @@ export default function App() {
     if (!mesh) return
     setSolveError(null)
     setSolving(true)
+    setSolveStatus('')
     setSolveSeconds(null)
     const t0 = performance.now()
     try {
-      const result = await engine.solve({
-        pde: pde.id,
-        f: fExpr.trim(),
-        c: cExpr.trim(),
-        p: order,
-        closed: mesh.closed,
-      })
+      const result = await solve(
+        mesh.data.mshBytes,
+        {
+          pde: pde.id,
+          f: fExpr.trim(),
+          c: cExpr.trim(),
+          p: order,
+          closed: mesh.closed,
+        },
+        { onProgress: setSolveStatus, onOutput: appendConsole },
+      )
       setSolution(result)
       setSolveSeconds((performance.now() - t0) / 1000)
     } catch (err) {
@@ -171,7 +163,7 @@ export default function App() {
     } finally {
       setSolving(false)
     }
-  }, [engine, mesh, pde, fExpr, cExpr, order])
+  }, [mesh, pde, fExpr, cExpr, order, appendConsole])
 
   const onDownloadMsh = useCallback(() => {
     if (!mesh) return
@@ -345,7 +337,9 @@ export default function App() {
               {solving ? 'Solving…' : 'Solve'}
             </button>
             <div className="solve-status">
-              {booting ? (
+              {solving ? (
+                <p className="status">{solveStatus || 'Solving…'}</p>
+              ) : booting ? (
                 <p className="status">
                   {[meshioStatus, engineStatus].filter(Boolean).join(' · ') || 'Preparing…'}
                 </p>

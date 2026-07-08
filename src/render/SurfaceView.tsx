@@ -8,7 +8,7 @@ import { useRef, useEffect, type CSSProperties } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { QuadMeshData } from '../mesh/quadmesh'
-import type { SolutionData } from '../engine/protocol'
+import type { SolutionData } from '../engine/engine'
 import { colormapLookup, colormapGradient } from './colormap'
 
 export interface ViewContent {
