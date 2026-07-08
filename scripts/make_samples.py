@@ -1,8 +1,9 @@
 """Generate the bundled sample quad meshes (public/samples/*.msh).
 
-Writes Gmsh MSH 2.2 ASCII files in the same canonical form the in-app
-converter produces: sequential 1-based node ids and 4-node quadrangle
-elements (type 3) with two tags.
+Writes Gmsh MSH 4.1 ASCII files in the same canonical form the in-app
+converter produces: one surface entity block, sequential 1-based node ids,
+and 4-node quadrangle elements (type 3) — the layout surfacemesh.import
+reads.
 
 Run from the repo root:  python3 scripts/make_samples.py
 """
@@ -14,17 +15,20 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "public", "samples")
 
 
 def write_msh(path, points, quads):
-    lines = ["$MeshFormat", "2.2 0 8", "$EndMeshFormat"]
+    n, m = len(points), len(quads)
+    lines = ["$MeshFormat", "4.1 0 8", "$EndMeshFormat"]
     lines.append("$Nodes")
-    lines.append(str(len(points)))
-    for i, (x, y, z) in enumerate(points, start=1):
-        lines.append(f"{i} {x:.16g} {y:.16g} {z:.16g}")
+    lines.append(f"1 {n} 1 {n}")  # numEntityBlocks numNodes minTag maxTag
+    lines.append(f"2 1 0 {n}")  # entityDim entityTag parametric numNodes
+    lines.extend(str(i) for i in range(1, n + 1))
+    lines.extend(f"{x:.16g} {y:.16g} {z:.16g}" for x, y, z in points)
     lines.append("$EndNodes")
     lines.append("$Elements")
-    lines.append(str(len(quads)))
+    lines.append(f"1 {m} 1 {m}")  # numEntityBlocks numElements minTag maxTag
+    lines.append(f"2 1 3 {m}")  # entityDim entityTag elementType(3=quad) numElements
     for i, q in enumerate(quads, start=1):
         a, b, c, d = (v + 1 for v in q)  # 0-based -> 1-based
-        lines.append(f"{i} 3 2 1 1 {a} {b} {c} {d}")
+        lines.append(f"{i} {a} {b} {c} {d}")
     lines.append("$EndElements")
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")

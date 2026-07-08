@@ -8,8 +8,7 @@ function result = solve_pde(mshfile, params)
 %     closed - true if every mesh edge is shared by exactly two quads
 %              (determined host-side from the connectivity)
 
-msh = load_gmsh_quads(mshfile);
-dom = surfacemesh_from_quads(msh);
+dom = surfacemesh.import(mshfile, 'gmsh');
 dom = resample(dom, params.p + 1);
 
 fh = eval(['@(x, y, z) ', params.f]);

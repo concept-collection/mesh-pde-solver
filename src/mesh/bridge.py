@@ -2,9 +2,10 @@
 #
 # parse_quad_mesh reads an uploaded mesh file with meshio, keeps only its
 # quadrilateral cells, and produces three outputs in Pyodide's in-memory
-# filesystem: the canonical Gmsh MSH 2.2 ASCII file the numbl solver reads
-# (full float64 precision), plus float32 positions and uint32 quad indices
-# for the JS-side preview and connectivity checks. See meshio.ts.
+# filesystem: the canonical Gmsh MSH 4.1 ASCII file the numbl solver reads
+# with surfacemesh.import (full float64 precision), plus float32 positions
+# and uint32 quad indices for the JS-side preview and connectivity checks.
+# See meshio.ts.
 
 import json
 import os
@@ -51,15 +52,21 @@ def _collect_quads(mesh, warnings):
 
 
 def _write_msh(path, points, quads):
-    """Canonical Gmsh MSH 2.2 ASCII: sequential ids, type-3 quads, two tags."""
-    lines = ["$MeshFormat", "2.2 0 8", "$EndMeshFormat", "$Nodes", str(len(points))]
-    for i, p in enumerate(points, start=1):
-        lines.append("%d %.16g %.16g %.16g" % (i, p[0], p[1], p[2]))
+    """Canonical Gmsh MSH 4.1 ASCII: one surface entity block, sequential
+    1-based node ids, 4-node quads (type 3) — what surfacemesh.import reads."""
+    n, m = len(points), len(quads)
+    lines = ["$MeshFormat", "4.1 0 8", "$EndMeshFormat"]
+    lines.append("$Nodes")
+    lines.append("1 %d 1 %d" % (n, n))  # numEntityBlocks numNodes minTag maxTag
+    lines.append("2 1 0 %d" % n)  # entityDim entityTag parametric numNodes
+    lines.extend(str(i) for i in range(1, n + 1))
+    lines.extend("%.16g %.16g %.16g" % (p[0], p[1], p[2]) for p in points)
     lines.append("$EndNodes")
     lines.append("$Elements")
-    lines.append(str(len(quads)))
+    lines.append("1 %d 1 %d" % (m, m))  # numEntityBlocks numElements minTag maxTag
+    lines.append("2 1 3 %d" % m)  # entityDim entityTag elementType(3=quad) numElements
     for i, q in enumerate(quads, start=1):
-        lines.append("%d 3 2 1 1 %d %d %d %d" % (i, q[0] + 1, q[1] + 1, q[2] + 1, q[3] + 1))
+        lines.append("%d %d %d %d %d" % (i, q[0] + 1, q[1] + 1, q[2] + 1, q[3] + 1))
     lines.append("$EndElements")
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")

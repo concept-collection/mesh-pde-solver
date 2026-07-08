@@ -8,9 +8,7 @@ Tips for future agents working in this repo.
 matlab/            the MATLAB project each solve runs standalone
   main.m           `mip load --install surfacefun` -> jsondecode params.json
                    -> solve_pde('mesh.msh', params) -> write result.json
-  solve_pde.m      mesh -> surfacemesh -> resample -> surfaceop -> per-patch data
-  load_gmsh_quads.m       minimal MSH 2.2 ASCII reader (canonical form only)
-  surfacemesh_from_quads.m  replaces surfacemesh.fromGmsh (see below)
+  solve_pde.m      surfacemesh.import -> resample -> surfaceop -> per-patch data
 src/mesh/          Pyodide + meshio upload pipeline (bridge.py runs in Pyodide)
 src/engine/        run-per-solve wrapper over numbl/browser's
                    createNumblSession: solve() boots a fresh session with
@@ -26,19 +24,20 @@ scripts/engine-test.mjs  headless Node check of the whole MATLAB pipeline
 
 ## Key gotchas
 
-- **numbl >= 0.4.10 from npm** (`NumblSession.readFile`, which the engine
-  uses to fetch result.json, landed in 0.4.10; the `numbl/browser` entry and
-  executeCode searchPaths scanning landed in 0.4.9). To develop against a
-  local numbl checkout, point package.json at `file:../../numbl` and run
-  `npm run build:lib && npm run build:browser` there after source changes.
-- **surfacemesh.fromGmsh is not used.** It locates the QUADS field via
-  `startsWith(fieldnames(...), 'QUADS')` (cellstr startsWith — unsupported in
-  numbl) and handles high-order gmsh quads. Our converter only emits 4-node
-  quads, so `surfacemesh_from_quads.m` builds the 2x2 patches directly.
-- **Canonical .msh only.** `load_gmsh_quads.m` assumes what
-  `src/mesh/bridge.py` writes: MSH 2.2 ASCII, sequential 1-based node ids,
-  type-3 elements, two tags. Uploaded .msh files in other layouts are fine —
-  they pass through meshio and get rewritten canonically.
+- **numbl >= 0.4.11 from npm.** Needs `NumblSession.readFile` (0.4.10) plus
+  enumeration-class support and the 1×1-tensor broadcast-assignment fix
+  (0.4.11 — surfacefun's `surfacemesh.patchtype` / `dealm` idiom depend on
+  both). To develop against a local numbl checkout, point package.json at
+  `file:../../numbl` and run `npm run build:lib && npm run build:browser`
+  there after source changes; when switching back to a `^` range,
+  `rm -rf node_modules package-lock.json && npm install` (else `npm ci` fails
+  on the stale `file:` link).
+- **surfacemesh.import needs MSH 4.1.** surfacefun's gmsh reader
+  (`+surfacemesh/+import/gmsh.m`) parses MSH 4.1 node-entity blocks, not
+  2.2. `src/mesh/bridge.py` and `scripts/make_samples.py` both write the
+  canonical 4.1 form (one surface entity block, sequential 1-based ids,
+  type-3 quads). Uploaded .msh files in other layouts pass through meshio
+  and get rewritten to 4.1.
 - **Solve errors reject the solve() promise** with the MATLAB error message
   (a failed script run is a numbl bootError). Each solve is a fresh session,
   so nothing needs to stay alive across failures.
@@ -46,10 +45,11 @@ scripts/engine-test.mjs  headless Node check of the whole MATLAB pipeline
   (p+1)^2 >= 9 long so it never bites here, but remember it when adding
   payload fields.
 - Package caching: numbl/browser persists /system (mip + installed
-  packages) in IndexedDB, wiped after 24 h of inactivity — the prewarm
-  session at page load re-downloads ~28 MB on a fresh day; solves after
-  that only pay a per-run `mip load` (~1 s). Delete the
-  `numbl-embed-system` IndexedDB database to test cold boots.
+  packages) in IndexedDB, wiped after 30 min of inactivity (numbl's default;
+  lowered from 24 h so a rebuilt surfacefun package refreshes without a manual
+  clear) — the prewarm session at page load re-downloads ~28 MB after a wipe;
+  solves after that only pay a per-run `mip load` (~1 s). Delete the
+  `numbl-embed-system` IndexedDB database to force a cold boot.
 
 ## Testing
 

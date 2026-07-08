@@ -75,12 +75,7 @@ async function main() {
   }
   console.log(`mip core: ${nMip} files into VFS`)
 
-  const projectFiles = [
-    'main.m',
-    'solve_pde.m',
-    'surfacemesh_from_quads.m',
-    'load_gmsh_quads.m',
-  ]
+  const projectFiles = ['main.m', 'solve_pde.m']
   for (const name of projectFiles) {
     vfs.writeFile(`/project/${name}`, enc.encode(readProjectFile(name)))
   }

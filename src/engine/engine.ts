@@ -7,8 +7,6 @@
 import { createNumblSession, type NumblSession } from 'numbl/browser'
 import main from '../../matlab/main.m?raw'
 import solvePde from '../../matlab/solve_pde.m?raw'
-import surfacemeshFromQuads from '../../matlab/surfacemesh_from_quads.m?raw'
-import loadGmshQuads from '../../matlab/load_gmsh_quads.m?raw'
 
 const SOLVE_TIMEOUT_MS = 300_000
 
@@ -78,8 +76,6 @@ export async function solve(
           files: [
             { path: 'main.m', content: main },
             { path: 'solve_pde.m', content: solvePde },
-            { path: 'surfacemesh_from_quads.m', content: surfacemeshFromQuads },
-            { path: 'load_gmsh_quads.m', content: loadGmshQuads },
             { path: 'params.json', content: JSON.stringify(params) },
             { path: 'mesh.msh', content: meshBytes },
           ],
