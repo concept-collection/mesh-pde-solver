@@ -1,12 +1,11 @@
-// Run-per-solve engine: each solve boots a fresh numbl/browser session that
-// runs matlab/main.m standalone (mip load + solve_pde), reads result.json
-// back from the session VFS, and disposes the worker. numbl persists the
-// installed packages in IndexedDB, so only the first-ever run downloads them;
-// prewarm() triggers that download at page load.
+// Run-per-solve engine: each solve fills matlab/solve_template.m with the
+// parameters, boots a fresh numbl/browser session that runs it standalone,
+// reads result.json back from the session VFS, and disposes the worker.
+// numbl persists the installed packages in IndexedDB, so only the first-ever
+// run downloads them; prewarm() triggers that download at page load.
 
 import { createNumblSession, type NumblSession } from 'numbl/browser'
-import main from '../../matlab/main.m?raw'
-import solvePde from '../../matlab/solve_pde.m?raw'
+import solveTemplate from '../../matlab/solve_template.m?raw'
 
 const SOLVE_TIMEOUT_MS = 300_000
 
@@ -20,9 +19,28 @@ export interface SolveParams {
   p: number
   /** every mesh edge shared by exactly two cells (from edgeClassification) */
   closed: boolean
+  /** filename the mesh is staged under, referenced by the generated script */
+  meshFile: string
 }
 
-/** Per-patch solution data, as packed by matlab/solve_pde.m. */
+/**
+ * Fill matlab/solve_template.m with actual parameter values. The result is
+ * the exact script a solve runs, and what the UI offers for download — it
+ * also runs in desktop MATLAB with surfacefun on the path.
+ */
+export function buildSolveScript(params: SolveParams): string {
+  const fills: Record<string, string> = {
+    MESHFILE: params.meshFile,
+    PDE: params.pde,
+    F_EXPR: params.f,
+    C_EXPR: params.pde === 'helmholtz' ? params.c : '0',
+    ORDER: String(params.p),
+    CLOSED: params.closed ? 'true' : 'false',
+  }
+  return solveTemplate.replace(/\{\{(\w+)\}\}/g, (token, key) => fills[key] ?? token)
+}
+
+/** Per-patch solution data, as packed by matlab/solve_template.m. */
 export interface SolutionData {
   type: 'solution'
   /** points per patch edge (p + 1); quad patches carry n*n points
@@ -77,12 +95,10 @@ export async function solve(
       (async () => {
         session = await createNumblSession({
           files: [
-            { path: 'main.m', content: main },
-            { path: 'solve_pde.m', content: solvePde },
-            { path: 'params.json', content: JSON.stringify(params) },
-            { path: 'mesh.msh', content: meshBytes },
+            { path: 'solve_pde.m', content: buildSolveScript(params) },
+            { path: params.meshFile, content: meshBytes },
           ],
-          mainFile: 'main.m',
+          mainFile: 'solve_pde.m',
           onProgress: hooks.onProgress,
           onOutput: hooks.onOutput,
         })

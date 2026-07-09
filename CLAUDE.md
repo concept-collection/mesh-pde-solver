@@ -5,18 +5,24 @@ Tips for future agents working in this repo.
 ## Architecture
 
 ```
-matlab/            the MATLAB project each solve runs standalone
-  main.m           `mip load --install surfacefun` -> jsondecode params.json
-                   -> solve_pde('mesh.msh', params) -> write result.json
-  solve_pde.m      surfacemesh.import -> resample -> surfaceop -> per-patch data
+matlab/
+  solve_template.m the whole solve as ONE script — mip load -> import ->
+                   resample -> surfaceop -> write result.json — with
+                   {{PLACEHOLDER}} tokens for the parameters. The engine's
+                   buildSolveScript fills them per solve, and the UI offers
+                   the filled script for download any time a mesh is loaded
+                   (before solving too — a solve might fail or hang). The
+                   same script runs in desktop MATLAB with the converted
+                   .msh alongside: via mip, or by commenting out the mip
+                   line and putting surfacefun on the path.
 src/mesh/          Pyodide + meshio upload pipeline (bridge.py runs in Pyodide)
 src/engine/        run-per-solve wrapper over numbl/browser's
-                   createNumblSession: solve() boots a fresh session with
-                   mesh.msh + params.json staged, reads result.json back via
-                   session.readFile, and disposes the worker. numbl owns the
-                   worker, VFS, mip bootstrap, and IndexedDB package
-                   persistence; prewarm() at page load triggers the one-time
-                   package download.
+                   createNumblSession: solve() fills the template and boots
+                   a fresh session with the script + mesh staged, reads
+                   result.json back via session.readFile, and disposes the
+                   worker. numbl owns the worker, VFS, mip bootstrap, and
+                   IndexedDB package persistence; prewarm() at page load
+                   triggers the one-time package download.
 src/pde/presets.ts PDE definitions, presets, slow-mesh warning threshold
 src/render/        three.js SurfaceView (mesh preview / solution) + parula
 scripts/engine-test.mjs  headless Node check of the whole MATLAB pipeline
@@ -45,9 +51,9 @@ scripts/engine-test.mjs  headless Node check of the whole MATLAB pipeline
   pass through meshio and get rewritten to 4.1.
 - **Triangle patches are flat vectors, not grids.** An order-p tri patch
   holds n(n+1)/2 points (n = p+1) in surfacefun's `trianglepts(n)` ordering;
-  quad patches are column-major n-by-n grids. `solve_pde.m` reports `ptype`
-  plus points-per-edge `n`, and SurfaceView triangulates tri patches with a
-  JS port of surfacefun's `trilattice.m`.
+  quad patches are column-major n-by-n grids. `solve_template.m` reports
+  `ptype` plus points-per-edge `n`, and SurfaceView triangulates tri patches
+  with a JS port of surfacefun's `trilattice.m`.
 - **Solve errors reject the solve() promise** with the MATLAB error message
   (a failed script run is a numbl bootError). Each solve is a fresh session,
   so nothing needs to stay alive across failures.
@@ -65,7 +71,8 @@ scripts/engine-test.mjs  headless Node check of the whole MATLAB pipeline
 
 - `npm run engine-test` — full headless solve in Node against the local
   numbl build (dist-lib), including a quantitative eigenfunction check. It
-  runs matlab/main.m standalone per solve (as the browser does), sharing
+  fills and runs matlab/solve_template.m standalone per solve (as the
+  browser does; the fill logic mirrors engine.ts's buildSolveScript), sharing
   one VFS across solves as the stand-in for IndexedDB persistence, and
   passes the mip search path explicitly, exercising the same
   searchPaths-scan behavior the numbl/browser session relies on. Downloads

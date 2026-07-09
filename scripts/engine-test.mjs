@@ -1,11 +1,13 @@
-// Headless validation of the solver — runs the same MATLAB project the
+// Headless validation of the solver — runs the same MATLAB script the
 // browser worker runs, in Node, against the installed numbl. Each solve
-// stages params.json, runs matlab/main.m standalone (as the browser does in
-// a fresh session), and reads result.json back from the VFS. The VFS is
-// shared across solves, standing in for numbl/browser's IndexedDB-persisted
-// /system, so `mip load --install surfacefun` only downloads once. Node has
-// no synchronous XMLHttpRequest, so websave/webread are shimmed with curl
-// (responses cached in .cache/ keyed by URL, so repeat runs are offline).
+// fills matlab/solve_template.m with the parameters (mirroring
+// buildSolveScript in src/engine/engine.ts), runs it standalone (as the
+// browser does in a fresh session), and reads result.json back from the
+// VFS. The VFS is shared across solves, standing in for numbl/browser's
+// IndexedDB-persisted /system, so `mip load --install surfacefun` only
+// downloads once. Node has no synchronous XMLHttpRequest, so
+// websave/webread are shimmed with curl (responses cached in .cache/ keyed
+// by URL, so repeat runs are offline).
 //
 //   npm run engine-test
 
@@ -58,8 +60,20 @@ class NodeFileIOAdapter extends BrowserFileIOAdapter {
   }
 }
 
-const readProjectFile = name =>
-  fs.readFileSync(path.join(root, 'matlab', name), 'utf8')
+const template = fs.readFileSync(path.join(root, 'matlab', 'solve_template.m'), 'utf8')
+
+// Mirrors buildSolveScript in src/engine/engine.ts.
+const buildSolveScript = params => {
+  const fills = {
+    MESHFILE: 'mesh.msh',
+    PDE: params.pde,
+    F_EXPR: params.f,
+    C_EXPR: params.pde === 'helmholtz' ? params.c : '0',
+    ORDER: String(params.p),
+    CLOSED: params.closed ? 'true' : 'false',
+  }
+  return template.replace(/\{\{(\w+)\}\}/g, (token, key) => fills[key] ?? token)
+}
 
 async function main() {
   const vfs = new VirtualFileSystem()
@@ -75,25 +89,21 @@ async function main() {
   }
   console.log(`mip core: ${nMip} files into VFS`)
 
-  const projectFiles = ['main.m', 'solve_pde.m']
-  for (const name of projectFiles) {
-    vfs.writeFile(`/project/${name}`, enc.encode(readProjectFile(name)))
-  }
   vfs.writeFile(
     '/project/mesh.msh',
     fs.readFileSync(path.join(root, 'public', 'samples', 'sphere.msh'))
   )
   vfs.setCwd('/project')
 
-  const workspaceFiles = projectFiles.map(n => ({name: n, source: readProjectFile(n)}))
   const decoder = new TextDecoder()
 
   const solve = params => {
-    vfs.writeFile('/project/params.json', enc.encode(JSON.stringify(params)))
+    const script = buildSolveScript(params)
+    vfs.writeFile('/project/solve_pde.m', enc.encode(script))
     vfs.writeFile('/project/result.json', enc.encode('')) // no stale reads
     const t = Date.now()
     executeCode(
-      readProjectFile('main.m'),
+      script,
       {
         onOutput: text => process.stdout.write(`[numbl] ${text}`),
         onDrawnow: () => {},
@@ -103,8 +113,8 @@ async function main() {
         fileIO: new NodeFileIOAdapter(vfs),
         system: new BrowserSystemAdapter(vfs),
       },
-      workspaceFiles,
-      vfs.normalizePath('/project/main.m'),
+      [{name: 'solve_pde.m', source: script}],
+      vfs.normalizePath('/project/solve_pde.m'),
       [MIP_SEARCH_PATH]
     )
     const result = JSON.parse(decoder.decode(vfs.readFile('/project/result.json')))

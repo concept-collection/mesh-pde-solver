@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ACCEPT, formatForFilename } from './mesh/formats'
 import { initMeshio, parseMeshFile } from './mesh/meshio'
 import { edgeClassification, type SurfaceMeshData } from './mesh/surfacemesh'
-import { prewarm, solve, type SolutionData } from './engine/engine'
+import { buildSolveScript, prewarm, solve, type SolutionData } from './engine/engine'
 import {
   PDES,
   SLOW_CELLS,
@@ -32,6 +32,19 @@ const SAMPLES = [
   { label: 'Sphere (triangles)', file: 'sphere-tri.msh' },
   { label: 'Torus', file: 'torus.msh' },
 ]
+
+// Filename the converted mesh is staged and downloaded under — embedded in
+// the generated MATLAB script, so sanitized to stay a plain quotable token.
+const mshFileName = (name: string) =>
+  (name.replace(/\.[^.]*$/, '').replace(/[^\w.-]+/g, '_') || 'mesh') + '.msh'
+
+const download = (filename: string, content: BlobPart) => {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([content], { type: 'application/octet-stream' }))
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
 
 export default function App() {
   const [meshioStatus, setMeshioStatus] = useState('Loading Python runtime…')
@@ -131,25 +144,33 @@ export default function App() {
     [loadMesh],
   )
 
+  // Everything the MATLAB script template needs, from the current UI state.
+  const solveParams = useCallback(
+    () =>
+      mesh && {
+        pde: pde.id,
+        f: fExpr.trim(),
+        c: cExpr.trim(),
+        p: order,
+        closed: mesh.closed,
+        meshFile: mshFileName(mesh.name),
+      },
+    [mesh, pde, fExpr, cExpr, order],
+  )
+
   const onSolve = useCallback(async () => {
-    if (!mesh) return
+    const params = solveParams()
+    if (!mesh || !params) return
     setSolveError(null)
     setSolving(true)
     setSolveStatus('')
     setSolveSeconds(null)
     const t0 = performance.now()
     try {
-      const result = await solve(
-        mesh.data.mshBytes,
-        {
-          pde: pde.id,
-          f: fExpr.trim(),
-          c: cExpr.trim(),
-          p: order,
-          closed: mesh.closed,
-        },
-        { onProgress: setSolveStatus, onOutput: appendConsole },
-      )
+      const result = await solve(mesh.data.mshBytes, params, {
+        onProgress: setSolveStatus,
+        onOutput: appendConsole,
+      })
       setSolution(result)
       setSolveSeconds((performance.now() - t0) / 1000)
     } catch (err) {
@@ -157,17 +178,16 @@ export default function App() {
     } finally {
       setSolving(false)
     }
-  }, [mesh, pde, fExpr, cExpr, order, appendConsole])
+  }, [mesh, solveParams, appendConsole])
 
   const onDownloadMsh = useCallback(() => {
-    if (!mesh) return
-    const blob = new Blob([mesh.data.mshBytes as BlobPart], { type: 'application/octet-stream' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = mesh.name.replace(/\.[^.]*$/, '') + '.msh'
-    a.click()
-    URL.revokeObjectURL(a.href)
+    if (mesh) download(mshFileName(mesh.name), mesh.data.mshBytes as BlobPart)
   }, [mesh])
+
+  const onDownloadScript = useCallback(() => {
+    const params = solveParams()
+    if (params) download('solve_pde.m', buildSolveScript(params))
+  }, [solveParams])
 
   const onPdeChange = (id: string) => {
     const def = PDES.find((p) => p.id === id) ?? PDES[0]
@@ -182,7 +202,9 @@ export default function App() {
       ? (mesh.numCells * (order + 1) * (order + 2)) / 2
       : mesh.numCells * (order + 1) * (order + 1)
     : 0
-  const canSolve = !!mesh && engineReady && !solving && fExpr.trim() !== ''
+  // Empty expressions would leave a syntactically broken generated script.
+  const paramsOk = !!mesh && fExpr.trim() !== '' && (!pde.cPresets || cExpr.trim() !== '')
+  const canSolve = paramsOk && engineReady && !solving
 
   return (
     <div className="app">
@@ -352,6 +374,14 @@ export default function App() {
                 </p>
               ) : null}
             </div>
+            <button className="linkish" onClick={onDownloadScript} disabled={!paramsOk}>
+              Download MATLAB script
+            </button>
+            <p className="hint">
+              The exact script Solve runs, with the current parameters filled in. It also runs
+              in desktop MATLAB with the converted .msh (from section 1) next to it — see the
+              script's header comments.
+            </p>
           </section>
 
           <section>
