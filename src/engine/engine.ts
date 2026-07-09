@@ -18,15 +18,18 @@ export interface SolveParams {
   c: string
   /** polynomial order per patch */
   p: number
-  /** every mesh edge shared by exactly two quads (from edgeClassification) */
+  /** every mesh edge shared by exactly two cells (from edgeClassification) */
   closed: boolean
 }
 
-/** Per-patch solution grids, as packed by matlab/solve_pde.m. */
+/** Per-patch solution data, as packed by matlab/solve_pde.m. */
 export interface SolutionData {
   type: 'solution'
-  /** points per patch edge (p + 1) */
+  /** points per patch edge (p + 1); quad patches carry n*n points
+   * (column-major grid), triangle patches n*(n+1)/2 (trianglepts order) */
   n: number
+  /** patch type of the mesh — never mixed */
+  ptype: 'quad' | 'tri'
   npatches: number
   x: number[][]
   y: number[][]

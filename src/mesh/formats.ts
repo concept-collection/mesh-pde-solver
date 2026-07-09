@@ -1,7 +1,8 @@
 /**
  * Upload formats the app accepts. All go through meshio (in Pyodide); the
- * mesh must contain quadrilateral cells — surfacefun's patches are quads,
- * and pure-triangle meshes are rejected with a pointer to why.
+ * mesh must contain triangle or quadrilateral cells — surfacefun computes
+ * on either patch type (but not both at once, so mixed meshes are split
+ * into all-triangle in bridge.py).
  */
 export interface MeshFormat {
   id: string // meshio file_format id

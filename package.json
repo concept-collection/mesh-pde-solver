@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "fflate": "^0.8.2",
-    "numbl": "^0.4.11",
+    "numbl": "^0.4.12",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "three": "^0.185.1"

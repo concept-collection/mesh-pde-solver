@@ -1,11 +1,11 @@
 function result = solve_pde(mshfile, params)
-%SOLVE_PDE  Load the quad mesh and solve the selected PDE on it.
+%SOLVE_PDE  Load the surface mesh and solve the selected PDE on it.
 %   params fields (from the host UI):
 %     pde    - 'poisson' (lap u = f) or 'helmholtz' ((lap + c) u = f)
 %     f      - right-hand side, a MATLAB expression in x, y, z
 %     c      - zeroth-order coefficient expression (helmholtz only)
 %     p      - polynomial order per patch
-%     closed - true if every mesh edge is shared by exactly two quads
+%     closed - true if every mesh edge is shared by exactly two cells
 %              (determined host-side from the connectivity)
 
 dom = surfacemesh.import(mshfile, 'gmsh');
@@ -44,8 +44,10 @@ result.pde = params.pde;
 end
 
 function data = pack_solution(dom, u)
-% One flat (column-major) x/y/z/u array per patch, each an n-by-n grid —
-% the same layout surfacefun-interactive's figure app uses.
+% One flat x/y/z/u array per patch: a column-major n-by-n grid for quad
+% patches (the layout surfacefun-interactive's figure app uses), or the
+% n*(n+1)/2-point trianglepts(n) set for triangle patches. data.n is the
+% number of points per patch edge in both cases.
 np = length(dom);
 px = cell(1, np);
 py = cell(1, np);
@@ -64,7 +66,14 @@ for k = 1:np
 end
 data = struct();
 data.type = 'solution';
-data.n = size(dom.x{1}, 1);
+if ( dom.ptype(1) == surfacemesh.patchtype.tri )
+    npts = length(dom.x{1});
+    data.n = round((sqrt(8*npts + 1) - 1) / 2);
+    data.ptype = 'tri';
+else
+    data.n = size(dom.x{1}, 1);
+    data.ptype = 'quad';
+end
 data.npatches = np;
 data.x = px;
 data.y = py;

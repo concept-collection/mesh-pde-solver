@@ -55,10 +55,8 @@ export const PDES: PdeDef[] = [
   },
 ]
 
-/** Above this many quads the in-browser solve becomes unreasonably slow. */
-export const MAX_QUADS = 4000
-/** Above this, warn that the solve may take a while. */
-export const SLOW_QUADS = 1500
+/** Above this many cells, warn that the solve may take a while. */
+export const SLOW_CELLS = 1500
 
 export const MIN_ORDER = 2
 export const MAX_ORDER = 10

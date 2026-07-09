@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ACCEPT, formatForFilename } from './mesh/formats'
 import { initMeshio, parseMeshFile } from './mesh/meshio'
-import { edgeClassification, type QuadMeshData } from './mesh/quadmesh'
+import { edgeClassification, type SurfaceMeshData } from './mesh/surfacemesh'
 import { prewarm, solve, type SolutionData } from './engine/engine'
 import {
   PDES,
-  MAX_QUADS,
-  SLOW_QUADS,
+  SLOW_CELLS,
   MIN_ORDER,
   MAX_ORDER,
   DEFAULT_ORDER,
@@ -20,16 +19,17 @@ let prewarmPromise: Promise<void> | null = null
 
 interface LoadedMesh {
   name: string
-  data: QuadMeshData
+  data: SurfaceMeshData
   numVertices: number
-  numQuads: number
+  numCells: number
   closed: boolean
   nonManifold: boolean
   warnings: string[]
 }
 
 const SAMPLES = [
-  { label: 'Sphere (cubed)', file: 'sphere.msh' },
+  { label: 'Sphere (quads)', file: 'sphere.msh' },
+  { label: 'Sphere (triangles)', file: 'sphere-tri.msh' },
   { label: 'Torus', file: 'torus.msh' },
 ]
 
@@ -89,18 +89,12 @@ export default function App() {
         const format = formatForFilename(name)
         if (!format) throw new Error(`Unsupported file extension on "${name}"`)
         const result = await parseMeshFile(bytes, format)
-        if (result.numQuads > MAX_QUADS) {
-          throw new Error(
-            `${result.numQuads} quads is too many for an in-browser solve ` +
-              `(limit ${MAX_QUADS}); please upload a coarser mesh.`,
-          )
-        }
-        const cls = edgeClassification(result.mesh.quads)
+        const cls = edgeClassification(result.mesh.cells, result.mesh.cellSize)
         setMesh({
           name,
           data: result.mesh,
           numVertices: result.numVertices,
-          numQuads: result.numQuads,
+          numCells: result.numCells,
           closed: cls.closed,
           nonManifold: cls.nonManifold,
           warnings: result.warnings,
@@ -182,7 +176,12 @@ export default function App() {
   }
 
   const booting = !meshioReady || !engineReady
-  const dof = mesh ? mesh.numQuads * (order + 1) * (order + 1) : 0
+  // points per patch: (p+1)^2 on quads, (p+1)(p+2)/2 on triangles
+  const dof = mesh
+    ? mesh.data.cellSize === 3
+      ? (mesh.numCells * (order + 1) * (order + 2)) / 2
+      : mesh.numCells * (order + 1) * (order + 1)
+    : 0
   const canSolve = !!mesh && engineReady && !solving && fExpr.trim() !== ''
 
   return (
@@ -190,7 +189,7 @@ export default function App() {
       <header>
         <h1>Mesh PDE Solver</h1>
         <p>
-          Upload a quadrilateral surface mesh, pick a PDE, and solve it on the surface with{' '}
+          Upload a triangle or quad surface mesh, pick a PDE, and solve it on the surface with{' '}
           <a href="https://github.com/danfortunato/surfacefun" target="_blank" rel="noreferrer">
             surfacefun
           </a>{' '}
@@ -214,8 +213,8 @@ export default function App() {
               ))}
             </div>
             <p className="hint">
-              Quad meshes in any format meshio reads ({ACCEPT.replaceAll(',', ' ')}); converted to
-              Gmsh format for surfacefun.
+              Triangle or quad meshes in any format meshio reads ({ACCEPT.replaceAll(',', ' ')});
+              converted to Gmsh format for surfacefun.
             </p>
             <div className="meshinfo">
               {parsing ? (
@@ -225,13 +224,14 @@ export default function App() {
               ) : mesh ? (
                 <>
                   <div>
-                    <strong>{mesh.name}</strong> — {mesh.numVertices} vertices, {mesh.numQuads}{' '}
-                    quads, {mesh.closed ? 'closed surface' : 'open surface (boundary present)'}
+                    <strong>{mesh.name}</strong> — {mesh.numVertices} vertices, {mesh.numCells}{' '}
+                    {mesh.data.cellSize === 3 ? 'triangles' : 'quads'},{' '}
+                    {mesh.closed ? 'closed surface' : 'open surface (boundary present)'}
                   </div>
                   {mesh.nonManifold && (
                     <div className="warn">Non-manifold edges detected; the solve may fail.</div>
                   )}
-                  {mesh.numQuads > SLOW_QUADS && (
+                  {mesh.numCells > SLOW_CELLS && (
                     <div className="warn">Large mesh — the solve may take a while.</div>
                   )}
                   {mesh.warnings.map((w) => (

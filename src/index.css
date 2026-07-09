@@ -262,3 +262,43 @@ details summary {
   color: #9aa3af;
   font-size: 15px;
 }
+
+.view-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1;
+  display: flex;
+  gap: 0;
+  border: 1px solid #b9c0ca;
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.view-toolbar button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: #5a6472;
+}
+
+.view-toolbar button + button {
+  border-left: 1px solid #dde1e7;
+}
+
+/* separates the anaglyph toggle from the mutually-exclusive mode group */
+.view-toolbar button.sep {
+  border-left: 3px double #dde1e7;
+}
+
+.view-toolbar button:hover {
+  background: #eef1f5;
+}
+
+.view-toolbar button.active {
+  background: rgba(22, 103, 194, 0.12);
+  color: #1257a6;
+}

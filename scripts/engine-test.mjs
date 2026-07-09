@@ -115,7 +115,8 @@ async function main() {
   // 1. Poisson on the closed sphere
   let d = solve({pde: 'poisson', f: 'x.*y.*z', c: '', p: 6, closed: true})
   console.log(`  npatches=${d.npatches} n=${d.n} u in [${d.umin.toFixed(6)}, ${d.umax.toFixed(6)}]`)
-  if (d.npatches !== 216 || d.n !== 7) throw new Error('unexpected solution shape')
+  if (d.npatches !== 216 || d.n !== 7 || d.ptype !== 'quad')
+    throw new Error('unexpected solution shape')
   if (!isFinite(d.umin) || !isFinite(d.umax) || d.umin === d.umax)
     throw new Error('degenerate solution values')
 
@@ -144,6 +145,28 @@ async function main() {
   // 4. A later solve is unaffected (fresh run per solve)
   d = solve({pde: 'poisson', f: 'x', c: '', p: 4, closed: true})
   if (d.type !== 'solution') throw new Error('solve after error failed')
+
+  // 5. Triangle mesh: the same eigenfunction check on an icosahedral sphere.
+  // Flat triangles hug the sphere worse than the cubed sphere's bilinear
+  // quads, so geometry error dominates: umax is ~0.0107 low at this
+  // subdivision level and shrinks 4x per level (O(h^2)) — hence the wider
+  // tolerance.
+  vfs.writeFile(
+    '/project/mesh.msh',
+    fs.readFileSync(path.join(root, 'public', 'samples', 'sphere-tri.msh'))
+  )
+  d = solve({pde: 'poisson', f: '-12*(x.*y.*z)', c: '', p: 6, closed: true})
+  console.log(`  tri eigencheck: umax=${d.umax.toFixed(6)} expected~${expected.toFixed(6)}`)
+  if (d.ptype !== 'tri' || d.npatches !== 320 || d.n !== 7)
+    throw new Error('unexpected triangle solution shape')
+  if (Math.abs(d.umax - expected) > 0.015)
+    throw new Error('triangle eigenfunction check failed')
+
+  // Helmholtz with a variable coefficient also works on triangle patches
+  d = solve({pde: 'helmholtz', f: '1 + 0*x', c: '100*(1 - z)', p: 6, closed: true})
+  console.log(`  tri helmholtz: u in [${d.umin.toFixed(6)}, ${d.umax.toFixed(6)}]`)
+  if (d.ptype !== 'tri' || !isFinite(d.umin) || d.umin === d.umax)
+    throw new Error('triangle helmholtz solve failed')
 
   console.log('engine-test: all checks passed')
 }

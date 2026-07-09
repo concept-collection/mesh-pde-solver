@@ -1,18 +1,18 @@
 /**
  * JS side of the meshio bridge (adapted from mesh-converter). Loads Pyodide
  * from the script tag in index.html, installs meshio via micropip, and runs
- * bridge.py to turn an uploaded mesh file into the app's quad-mesh
+ * bridge.py to turn an uploaded mesh file into the app's surface-mesh
  * representation — all client-side.
  */
 import bridgeCode from './bridge.py?raw'
 import type { MeshFormat } from './formats'
-import type { QuadMeshData } from './quadmesh'
+import type { SurfaceMeshData } from './surfacemesh'
 
 const MESHIO_SPEC = 'meshio==5.3.5'
 
 const OUT_MSH = '/work/out.msh'
 const POSITIONS_F32 = '/work/positions.f32'
-const QUADS_U32 = '/work/quads.u32'
+const CELLS_U32 = '/work/cells.u32'
 
 interface Pyodide {
   runPython(code: string): unknown
@@ -32,9 +32,9 @@ declare global {
 }
 
 export interface ParseResult {
-  mesh: QuadMeshData
+  mesh: SurfaceMeshData
   numVertices: number
-  numQuads: number
+  numCells: number
   warnings: string[]
 }
 
@@ -79,7 +79,7 @@ export async function parseMeshFile(bytes: Uint8Array, format: MeshFormat): Prom
   try {
     infoJson = String(
       pyodide.runPython(
-        `parse_quad_mesh(${JSON.stringify(inputPath)}, ${JSON.stringify(format.id)})`,
+        `parse_mesh(${JSON.stringify(inputPath)}, ${JSON.stringify(format.id)})`,
       ),
     )
   } catch (err) {
@@ -93,15 +93,18 @@ export async function parseMeshFile(bytes: Uint8Array, format: MeshFormat): Prom
   }
   const info = JSON.parse(infoJson) as {
     numVertices: number
-    numQuads: number
+    numCells: number
+    cellSize: 3 | 4
     warnings: string[]
   }
   const posBytes = pyodide.FS.readFile(POSITIONS_F32)
-  const quadBytes = pyodide.FS.readFile(QUADS_U32)
-  const mesh: QuadMeshData = {
+  const cellBytes = pyodide.FS.readFile(CELLS_U32)
+  const mesh: SurfaceMeshData = {
     positions: new Float32Array(posBytes.buffer, posBytes.byteOffset, posBytes.byteLength / 4),
-    quads: new Uint32Array(quadBytes.buffer, quadBytes.byteOffset, quadBytes.byteLength / 4),
+    cells: new Uint32Array(cellBytes.buffer, cellBytes.byteOffset, cellBytes.byteLength / 4),
+    cellSize: info.cellSize,
     mshBytes: pyodide.FS.readFile(OUT_MSH),
   }
-  return { mesh, ...info }
+  const { numVertices, numCells, warnings } = info
+  return { mesh, numVertices, numCells, warnings }
 }
